@@ -36,7 +36,7 @@ function initDict() {
   while (files.hasNext()) {
     nextFile = files.next();
     nextFileName = nextFile.getName();
-    nextFileName = nextFileName.toLowerCase();
+    nextFileName = String(nextFileName).toLowerCase();
     nextFileName = nextFileName.slice(0, nextFileName.lastIndexOf("."));
     fileDict[nextFileName] = nextFile;
   }
