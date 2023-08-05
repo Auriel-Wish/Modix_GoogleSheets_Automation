@@ -123,10 +123,10 @@ function validSheetName(sheetName) {
   invalidSheets = ['Dashboard', 'SKU', 'CHANGES', 'SUMMARY', 'TABLE'];
 
   lower = invalidSheets.map(element => {
-    return element.toLowerCase();
+    return String(element).toLowerCase();
   });
   // if the name is not in the array of invalid sheets, return true (valid)
-  return !(lower.includes(sheetName.toLowerCase()));
+  return !(lower.includes(String(sheetName).toLowerCase()));
 }
 
 function clearEdits() {
