@@ -1,116 +1,113 @@
+// Call export SKUNF either way but pass in false if you really only want to call exportBOMHelper.
+// This allows for the removal of unwanted sheets
+function exportSKUNF() {
+  exportSKUNFHelper(true);
+}
+
+function exportBOM() {
+  exportSKUNFHelper(false);
+}
+
 /*
- * exportSKUNF
+ * exportSKUNFHelper
  * 
  * Purpose: Prepare the SKU file to be exported - remove all the items of type fastener
  */
-function exportSKUNF()
-{  
-  let ss = SpreadsheetApp.getActiveSpreadsheet();
+function exportSKUNFHelper(deleteFasteners) {  
+  let fileName = getNewFileName('.xlsx');
 
-  let dashboard = ss.getSheetByName('Dashboard');
-  let percentCell = 'B3';
-  let progressCell = 'C3';
-  makeProgressBar(dashboard, percentCell, progressCell);
-  updateProgressBar(dashboard, 0, percentCell);
+  let ui = SpreadsheetApp.getUi();
+  let result = ui.prompt("Column with unwanted sheets (ex - G):");
+  let unwantedSheetsCol = (result.getResponseText()).toUpperCase();
   
-  // Access google drive folder - /drive/AUTOMATION/TEMP
-  const destination_folder = DriveApp.getFolderById('18TFKwhzH2m9A6DFN6nM83HWAFD4hdE6u');
+  // AUTOMAITON/TEMP
+  let tempFolder = DriveApp.getFolderById('18TFKwhzH2m9A6DFN6nM83HWAFD4hdE6u');
 
-  // Open MODIX V4-BOM-SKU and copy that sheets file into the folder
-  var file = copyFile(ss, destination_folder);
-  updateProgressBar(dashboard, 0.1, percentCell);
+  let tempFile = copyFile(SpreadsheetApp.getActive(), tempFolder);
+  let newFile = SpreadsheetApp.openById(tempFile.getId());
 
-  // Open this copied file and access its sheets
-  let new_file = SpreadsheetApp.openById(file.getId());
-  var sheets = new_file.getSheets();
+  manualImportRange(newFile);
+  deleteUnwantedSheets(newFile.getId(), unwantedSheetsCol);
 
-  updateProgressBar(dashboard, 0.2, percentCell);
+  if (deleteFasteners) {
+    removeFasteners(newFile);
+  }
+
+  exportBOMHelper(newFile.getId(), fileName)
+
+  // move the temp file to trash
+  tempFile.setTrashed(true);
+}
+
+function removeFasteners(newFile) {
+  var sheets = newFile.getSheets();
+
   // Loop through all the sheets in the workbook
-  let progressAmt = 0.2
   for(var i = 0; i < sheets.length; i++) {
+    Logger.log('Removing fasteners: ' + sheets[i].getName());
+
     // Find the "Type" column
     let column = findSectionCol(sheets[i], "Type", 2);
     
-    progressAmt = 0.2 + i / sheets.length;
-    if (progressAmt < 0.2) {
-      progressAmt = 0.2;
-    }
-    else if (progressAmt > 0.8) {
-      progressAmt = 0.8;
-    }
-    updateProgressBar(dashboard, progressAmt, percentCell);
-    
     // If the "Type" column exists, remove any rows where the type is Fastener
-    if(column != -1)
-    {
-      // Unecessary
-      sheets[0].getRange("B2").setValue(sheets[i].getName())
-
+    if(column != -1) {
       // Get all the values in the "Type" column
-      var range = sheets[i].getRange(3,column+1,sheets[i].getLastRow())
+      var range = sheets[i].getRange(3, column, sheets[i].getLastRow(), 1);
       var values = range.getValues();
-
-      // Rename the sheet with -NF at the end (No Fasteners)
-      var newName = sheets[i].getName() + "-NF"
-      sheets[i].setName(newName);
 
       var row = 3
       var count = 0;
       // Remove all rows that are of type Fastener
-      for(var j=0; j<values.length; j++)
-      {
-        if(values[j] == "Fasteners")
-        {
-          sheets[i].deleteRow(row + j - count)
-          count++;
+      for(var j = 0; j < values.length; j++) {
+        if(values[j][0] == "Fasteners") {
+          sheets[i].deleteRow(row + j - count);
+          
+          if (count == 0) {
+            // Rename the sheet with -NF at the end (No Fasteners)
+            var newName = sheets[i].getName() + "-NF";
+            sheets[i].setName(newName);
+          }
 
-          // Unnecessary
-          sheets[0].getRange("B3").setValue("item " + count + " deleted")
+          count++;
         }
       }
     }
   }
+}
 
-  exportBOM(new_file.getId())
+function manualImportRange(newFile) {
+  let importedSKU = newFile.getSheetByName('SKU');
 
-  updateProgressBar(dashboard, 1, percentCell);
+  let realSKU = SpreadsheetApp.openById('1cEEd7h09hxiDGv8hC9trVf3w5lsOA_672eQn_n5vFBU');
+  realSKU = realSKU.getSheetByName('SKU');
 
-  // move the temp file to trash
-  file.setTrashed(true);
+  let copyVals = realSKU.getRange(1, 1, realSKU.getLastRow(), realSKU.getLastColumn() - 1).getValues();
+  importedSKU.getRange(1, 1, realSKU.getLastRow(), realSKU.getLastColumn() - 1).setValues(copyVals);
+
+  copyVals = realSKU.getRange(1, realSKU.getLastColumn(), realSKU.getLastRow(), 1).getFormulas();
+  importedSKU.getRange(1, realSKU.getLastColumn(), realSKU.getLastRow(), 1).setFormulas(copyVals);
+
+  importedSKU.getRange('A1').setValue('');
+  Logger.log(importedSKU.getRange('A1').getValue());
 }
 
 /*
- * exportBOM
+ * exportBOMHelper
  * 
- * Purpose: Export the BOM file to the /drive/AUTOMATION/EXCEL folder
+ * Purpose: Export the BOM file to the /drive/AUTOMATION/BOM folder
  * Parameters: id - the file ID (for google drive) of the no-fasteners SKU file
  */
-function exportBOM(id) {
-  // Set where the BOM file will be saved - /drive/AUTOMATION/EXCEL
-  const destination_folder = DriveApp.getFolderById('11l_03Ug2OA3LIT1x2mwOQmwH7ZrlIBL7');
-  var printer_name = "SKU";
+function exportBOMHelper(id, fileName) {
+  // Set where the BOM file will be saved - /drive/AUTOMATION/BOM
+  let destinationFolder = DriveApp.getFolderById('11l_03Ug2OA3LIT1x2mwOQmwH7ZrlIBL7');
   let exportURL = "https://docs.google.com/spreadsheets/d/" + id.toString() + "/export?format=xlsx";
   
-  // Ask user to supply version number for BOM file
-  var ui = SpreadsheetApp.getUi();
-  let result = ui.prompt("Version Number:")
+  // Create the file
+  let blob = getFileAsBlob(exportURL);
+  blob.setName(fileName);
 
-  // If they don't cancel the export, go through with the export
-  if (result.getSelectedButton() == ui.Button.OK)
-  {
-    let version = result.getResponseText(); 
-    let fileName = printer_name + "-V4-BOM_V" + version;
+  // Place file in folder
+  destinationFolder.createFile(blob);
 
-    // Create the file
-    let blob = getFileAsBlob(exportURL);
-    blob.setName(fileName + ".xlsx");
-
-    // Place file in folder
-    destination_folder.createFile(blob);
-    ui.alert("File Created:" + fileName);
-  }
-  else
-  {
-    ui.alert("Operation Canceled");
-  }
+  SpreadsheetApp.getUi().alert("File Created: " + fileName);
 }
