@@ -1,70 +1,73 @@
 function exportPDF() {
-  // AUTOMAITON/TEMP
+  // AUTOMAITON/Packing List/Google Sheets
+  let googleSheetsFolder = DriveApp.getFolderById('1dz4HCLRI7BDtPcv5JOeRVckgGHDPYx_Z');
+  // AUTOMAITON/Packing List/PDFs
+  let destinationFolder = DriveApp.getFolderById('1hfOeIS7QmQu-jK31QSRpuk4kEO-8CSQu');
+  // AUTOMAITON/Temp
   let tempFolder = DriveApp.getFolderById('18TFKwhzH2m9A6DFN6nM83HWAFD4hdE6u');
-  // AUTOMAITON/Packing List
-  let destinationFolder = DriveApp.getFolderById('1liz9opXDr3h87oRjzCYW0cxsfSb0obmC');
 
-  // progress bar
-  let ss = SpreadsheetApp.getActiveSpreadsheet();
-  let dashboard = ss.getSheetByName('Dashboard');
-  let percentCell = 'B11';
-  let progressCell = 'C11';
-  SKU_Automation.makeProgressBar(dashboard, percentCell, progressCell);
-  SKU_Automation.updateProgressBar(dashboard, 0, percentCell);
+  let newFileName = getNewFileName('.pdf');
+  // let newFileName = 'tee.pdf'
 
-  ss = SpreadsheetApp.getActive();
-  let fstream = SKU_Automation.copyFile(ss, tempFolder);
-  let newFile = SpreadsheetApp.openById(fstream.getId());
+  let ui = SpreadsheetApp.getUi();
+  let result = ui.prompt("Column with unwanted sheets (ex - G):");
+  let unwantedSheetsCol = (result.getResponseText()).toUpperCase();
+  // let unwantedSheetsCol = 'G';
+  
+  let googleSheetsFile = copyFile(SpreadsheetApp.getActive(), googleSheetsFolder);
+  let newFile = SpreadsheetApp.openById(googleSheetsFile.getId());
+  newFile.rename(newFileName);
+
+  manualImportRange(newFile);
+
+  let skuSheet = newFile.getSheetByName("SKU");
+  try {
+    let skuCol = findSectionCol(skuSheet, "PRICE", 1);
+    skuSheet.getRange(1, skuCol, skuSheet.getLastRow(), 1).clear();
+
+    skuCol = findSectionCol(skuSheet, "Sale Price", 1);
+    skuSheet.getRange(1, skuCol, skuSheet.getLastRow(), 1).clear();
+
+    skuSheet.getRange(1, skuSheet.getLastColumn(), 1, 1).setValue("Image");
+    skuSheet.getRange(skuSheet.getLastRow() + 1, 1, 1, 1).setValue("SIGNAL-END-OF-SKU");
+  }
+  catch(e) {
+    Logger.log(e)
+  }
+
+  deleteUnwantedSheets(newFile.getId(), unwantedSheetsCol);
+  
+  removeFasteners(newFile);
+
   let allSheets = newFile.getSheets();
   let numSheets = allSheets.length;
-  let unwantedSheets = ['SKU', 'CHANGES', 'SUMMARY', 'OLD CHANGES', 'Dashboard'];
+
+  manualImportRangePDF(allSheets);
+
   // MODIX V4-BOM-SKU
   let subAssemblyID = '1cEEd7h09hxiDGv8hC9trVf3w5lsOA_672eQn_n5vFBU';
   let subWorkbook = SpreadsheetApp.openById(subAssemblyID);
 
-  SKU_Automation.updateProgressBar(dashboard, 0.2, percentCell);
-  let progressAmt;
   for (let i = 0; i < numSheets; i++) {
     Logger.log(allSheets[i].getName());
 
-    progressAmt = 0.2 + i / numSheets;
-    if (progressAmt < 0.2) {
-      progressAmt = 0.2;
-    }
-    else if (progressAmt > 0.8) {
-      progressAmt = 0.8;
-    }
-    SKU_Automation.updateProgressBar(dashboard, progressAmt, percentCell);
-
-    if (unwantedSheets.includes(allSheets[i].getName())) {
-      // delete the unwanted sheets
-      newFile.deleteSheet(allSheets[i]); 
-    }
-    else {
-      deleteUnwantedColumns(allSheets[i]);
-      let partNumberCol = findSectionCol(allSheets[i], "PART NUMBER", 2);
-      if (partNumberCol > 0) {
-        checkHyperlinks(allSheets[i], partNumberCol, subWorkbook);
-      }
+    let partNumberCol = findSectionCol(allSheets[i], "PART NUMBER", 2);
+    if (partNumberCol > 0) {
+      checkHyperlinks(allSheets[i], partNumberCol, subWorkbook);
     }
   }
 
-  Logger.log('Finished Editing Sheet');
+  for (let i = 0; i < numSheets; i++) {
+    if (!(String(allSheets[i].getName()).toLowerCase().includes("fastener"))) {
+      deleteUnwantedColumns(allSheets[i]);
 
-  let newFileName = SpreadsheetApp.getActive().getName();
-  let fileType = 'pdf';
-  createFile(newFileName, newFile.getId(), destinationFolder, fileType);
+      allSheets[i].getRange(3, 1, allSheets[i].getLastRow(), allSheets[i].getLastColumn()).setBackground('white').setFontColor('black');
+    }
+  }
 
-  SKU_Automation.updateProgressBar(dashboard, 1, percentCell);
+  createFile(newFileName, newFile.getId(), destinationFolder);
 
-  fstream.setTrashed(true);
-}
-
-function createFile(fileName, fileID, destinationFolder, fileType) {
-  let blob = DriveApp.getFileById(fileID).getBlob(); 
-  blob.setName(fileName + "." + fileType);
-  destinationFolder.createFile(blob);
-  SpreadsheetApp.getUi().alert(fileName + " created");
+  skuSheet.getRange(skuSheet.getLastRow(), 1, 1, 1).setValue("");
 }
 
 function checkHyperlinks(sheet, partNumberColOrig, subWorkbook) {
@@ -74,9 +77,16 @@ function checkHyperlinks(sheet, partNumberColOrig, subWorkbook) {
   let partNumber;
   let colAdded = false;
 
-  for (let i = 3; i <= lastRow; i++) {
+  for (let i = 3; i <= sheet.getLastRow(); i++) {
     let hyperlink = sheet.getRange(i, partNumberColOrig, 1, 1).getRichTextValue().getLinkUrl();
+
+    sheet.getRange(i, partNumberColOrig + 1, 1, 1).setRichTextValue(SpreadsheetApp.newRichTextValue().setText(sheet.getRange(i, partNumberColOrig + 1, 1, 1).getValue()).setLinkUrl(null).build());
+      sheet.getRange(i, partNumberColOrig + 1, 1, 1).setFontColor('black').setFontLine('none');
+
     if (hyperlink != null) {
+      sheet.getRange(i, partNumberColOrig, 1, 1).setRichTextValue(SpreadsheetApp.newRichTextValue().setText(sheet.getRange(i, partNumberColOrig, 1, 1).getValue()).setLinkUrl(null).build());
+      sheet.getRange(i, partNumberColOrig, 1, 1).setFontColor('black').setFontLine('none');
+
       if (!colAdded) {
         colAdded = true;
         sheet.insertColumnAfter(partNumberColOrig);
@@ -100,43 +110,79 @@ function checkHyperlinks(sheet, partNumberColOrig, subWorkbook) {
 // copy from sheet 2 to sheet 1
 function copyCols(sheet1, sheet2, col1, col2, startRow1, startRow2) {
   let numRows = sheet2.getLastRow() - startRow2 + 1;
-  sheet1.insertRows(startRow1, numRows);
-  let numColsToCopy = 3 // CHANGE TO 4 ONCE PICTURES ARE WORKING
-  let vals = sheet2.getRange(startRow2, col2, numRows, numColsToCopy).getValues();
-  let pasteRange = sheet1.getRange(startRow1, col1, numRows, numColsToCopy);
-  pasteRange.setValues(vals);
-}
+  let numColsToCopy = 3 // Doesn't include picture column
+  
+  let picCol1 = findSectionCol(sheet1, "PICTURE", 2);
+  let picCol2 = findSectionCol(sheet2, "PICTURE", 2);
+  let typeCol = findSectionCol(sheet2, "TYPE", 2);
 
-/*
- * findSectionCol
- * 
- * Purpose: In the changed sheet, find the column associated with the given section
- * Parameters: sheet - the changed sheet to look in, sectionName - the name of the desired section, row - the row
- *             conatining the section labels
- */
-function findSectionCol(sheet, sectionName, row) {
-  currSection = "-1";
-  currCol = 0;
-  // keep scanning until the section is found or until there are no more sections names to scan
-  while (!(currSection.toLowerCase().includes(sectionName.toLowerCase())) && currSection != "") {
-    currCol++;
-    currSection = sheet.getRange(row, currCol, 1, 1).getValue();
+  if (typeCol == -1) {
+    Logger.log('Sheet: ' + sheet2.getName() + ' does not have a type column')
+  }
+  else {
+    Logger.log('Sheet: ' + sheet2.getName() + ' has a type column')
   }
 
-  if (currSection == "") {
-    return -1;
+  let currType = '-1';
+  let currVal;
+  let currPics;
+  let alph;
+  for (let i = 0; i < numRows; i++) {
+    if (typeCol != -1) {
+      currType = sheet2.getRange(i + startRow2, typeCol, 1, 1).getValue();
+    }
+
+    if (!(String(currType).toLowerCase().includes('fastener'))) {
+      sheet1.insertRows(startRow1 + i, 1);
+      currVal = sheet2.getRange(i + startRow2, col2, 1, numColsToCopy).getValues();
+      sheet1.getRange(i + startRow1, col1, 1, numColsToCopy).setValues(currVal);
+
+      alph = String.fromCharCode(col1 + 'A'.charCodeAt(0) - 1);
+      currPics = "=VLOOKUP(" + alph + (i + startRow1) + ",SKU!$B$3:$G$1007,6,FALSE())";
+      sheet1.getRange(i + startRow1, picCol1, 1, 1).setFormula(currPics);
+    }
   }
-  return currCol;
 }
 
 // Delete the price and type columns
 function deleteUnwantedColumns(sheet) {
   let currVal = '-1';
-  for (let i = 1; currVal != ''; i++) {
-    currVal = sheet.getRange(2, i, 1, 1).getValue();
-    if (currVal.toLowerCase().includes('price') || currVal.toLowerCase().includes('type')) {
-      sheet.deleteColumn(i);
-      i--;
+  let lastCol = sheet.getLastColumn();
+  for (let i = 1; i < lastCol; i++) {
+    try {
+      currVal = sheet.getRange(2, i, 1, 1).getValue();
+      if (String(currVal).toLowerCase().includes('price') || String(currVal).toLowerCase().includes('type')) {
+        Logger.log('Deleting: ' + currVal)
+        sheet.deleteColumn(i);
+        i--;
+      }
+    }
+    catch (error) {
+      Logger.log(error);
     }
   }
+}
+
+function manualImportRangePDF(allSheets) {
+  for (let i = 0; i < allSheets.length; i++) {
+    if (String(allSheets[i].getName()).toLowerCase().includes('fastener')) {
+      let importedFasteners = allSheets[i];
+      let realFasteners = SpreadsheetApp.getActiveSpreadsheet();
+      realFasteners = realFasteners.getSheetByName(allSheets[i].getName());
+
+      let copyVals = realFasteners.getRange(1, 1, realFasteners.getLastRow(), realFasteners.getLastColumn()).getValues();
+      importedFasteners.getRange(1, 1, realFasteners.getLastRow(), realFasteners.getLastColumn()).setValues(copyVals);
+
+      importedFasteners.getRange('A1').setValue('');
+      Logger.log(importedFasteners.getRange('A1').getValue());
+      
+      break;
+    }
+  }
+}
+
+function getSheetById(file, id) {
+  return file.getSheets().filter(
+    function(s) {return s.getSheetId() === id;}
+  )[0];
 }
